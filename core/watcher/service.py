@@ -89,9 +89,14 @@ def run_watcher(poll_interval=3):
 
                     if is_antigravity_running():
                         print("[Watcher] Antigravity 进程正在运行，等待客户端退出后自愈...")
-                        wait_for_antigravity_exit()
+                        exited = wait_for_antigravity_exit(timeout=120)
+                        if not exited:
+                            warn_msg = "等待 Antigravity 客户端退出超时，应用仍在运行。为防止文件损坏，本轮跳过补丁，将在下一轮轮询重新检测。"
+                            log_event("WATCH", warn_msg, is_error=True)
+                            print(f"[Watcher] [警告] {warn_msg}")
+                            continue
 
-                    print("[Watcher] 客户端已退出，开始执行自动重新汉化...")
+                    print("[Watcher] 客户端已确认退出，开始执行安全自愈汉化...")
                     ok, msg = perform_patch(force=True, is_self_healing=True)
                     if ok:
                         print(f"[Watcher] [成功] 自动无感重打汉化完成！{msg}")
