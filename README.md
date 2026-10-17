@@ -14,9 +14,9 @@
 
 ## 🏷️ 二、 当前版本状态
 
-- **插件版本**：`v3.0.0-self-healing`
+- **插件版本**：`v3.1.0-hardened-baseline`
 - **适配宿主版本**：Google Antigravity 2.24.0 (Windows x64 Desktop)
-- **基线状态**：当前稳定可用基线版本（已通过语法静态分析与真实客户端完整性审计）。
+- **基线状态**：可靠性加固稳定基线版本（已通过候选版本安全性验证、超时熔断、原子替换、语法分析与 10 项核心边界自动化测试）。
 
 ---
 
@@ -104,8 +104,10 @@ antigravity-chinese/
 │   ├── cli.py                  # 统一管理 CLI 工具
 │   ├── config.py               # 路径探测、版本获取与路径配置
 │   ├── state.py                # 版本与 Hash 状态数据库操作
-│   ├── state.json              # 运行期状态存储 (基线 Hash 与自愈记录)
+│   ├── state.example.json      # 运行期状态模版 (已与 Git 仓库基线解耦)
 │   ├── logger.py               # 规范日志记录器
+│   ├── test_suite.py           # 可靠性加固全量自动化测试套件 (覆盖 10 项严苛边界条件)
+│   ├── test_self_healing.py    # 核心文件自愈注入闭环测试
 │   ├── backups/                # 独立官方原版备份隔离区 (防止被覆盖)
 │   │   └── .gitkeep
 │   ├── logs/                   # 持久化审计日志 (patch.log, watch.log)

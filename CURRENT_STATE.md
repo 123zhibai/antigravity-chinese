@@ -2,7 +2,9 @@
 
 > **审计目的**：供开发者与 AI 审计工具直接读取，以核查当前工程真实实现状态、识别薄弱环节并指导后续针对性升级。  
 > **记录基准时间**：2026-10-17  
-> **基线 Commit 目标**：`chore: upload current stable antigravity chinese baseline`
+> **基线维护版本**：`v3.1.0-hardened-baseline`  
+> **前置 Commit**：`af68f99d52f58156b92680ed0ad25e6df1028694`  
+> **当前维护状态**：已完成全部 P0 核心安全链路（备份保护、成功判定、超时阻断、原子替换）与 P1 维护性（状态解耦、校验强化、口径校准）加固，具备作为长期稳定维护基线的条件。
 
 ---
 
@@ -10,7 +12,7 @@
 
 - **宿主程序版本**：Google Antigravity `2.24.0` (`ProductVersion: 2.24.0.0`, `FileVersion: 2.24.0`)
 - **宿主架构**：Windows x64 Desktop (Electron)
-- **汉化插件版本**：`v3.0.0-self-healing`
+- **汉化系统版本**：`v3.1.0-hardened-baseline`
 - **当前官方核心文件 SHA-256**：`bd10a0054ca3ad469142b2c2757566493ecc0afb934b9a61ce45d38a4d09316e` (4,486,221 字节)
 - **补丁注入后核心文件 SHA-256**：`d031dc1e5465b6b1c5fc8fa340ed9e4045a58f0267bdae710f980bb8763fd7d5`
 
@@ -29,24 +31,25 @@
    - 动态限额倒计时解析（自动将 `weekly limit, which fully refreshes in 4 days, 15 hours` 转换为自然中文时段表达）；
    - 智能体思考耗时（`Thinking for 12s` ➔ `思考耗时 12s`）；
    - 文件与命令执行状态（已分析、已编辑、已创建、正在执行）。
-3. **自愈与版本检测机制**：
-   - `core/cli.py status`：毫秒级输出版本、Hash、自愈次数、备份状态；
-   - `core/cli.py verify`：静态解析 ASAR 并执行 `node --check` 语法与特征审计；
-   - `core/cli.py repair` / `install`：纯 Python 流式构建与注入；
-   - `core/cli.py restore`：一键无条件恢复官方纯净原版；
-   - `core/launcher.py` / `agy-launch.bat`：智能自愈启动器；
-   - `core/test_self_healing.py`：模拟官方覆盖全闭环测试 100% 通过。
+3. **加固后的自愈与安全保护体系**：
+   - **官方纯净备份严格准入 (P0-1)**：在更新 clean backup 前强制执行多重采样稳定性检测（大小与 SHA-256 采样一致性）、ASAR 解包解析、关键入口（`dist/main.js`、`dist/utils.js`）与纯净性验证，彻底防止更新写入中或损坏文件污染备份；
+   - **严格成功判定标准 (P0-2)**：Fallback 与 Common 适配器强制以 UI 注入成功为最低且必要条件，仅菜单成功时严禁判定整体成功，彻底杜绝假成功；
+   - **Watcher 退出超时熔断 (P0-3)**：`wait_for_antigravity_exit()` 超时返回 False 时立即阻断当轮补丁并记录 warning 日志，严禁在客户端运行中强改 `app.asar`；
+   - **真正安全的原子文件替换 (P0-4)**：`构建临时文件 ➔ 完整性与汉化 Marker 校验 ➔ 同目录临时文件 ➔ os.replace()`，确保校验失败或异常时正式文件丝毫不受损，无残留 `.patch_tmp`；
+   - **仓库基线解耦 (P1-1)**：`core/state.json` 已移入 `.gitignore`，新增 `core/state.example.json`，即使全新 clone 无 state 文件系统亦能平滑自初始化并正常运行；
+   - **增强校验器 (P1-2)**：增加 UI marker 校验、expected_files 检查，并在缺少 Node.js 时返回明确的 `degraded verification` 标识；
+   - **综合测试套件 (P1-3)**：建立覆盖 10 大核心边界条件的 `core/test_suite.py`，全部测试 100% 通过。
 4. **代码与终端环境防护**：
-   - 严格排除 `.monaco-editor`、`.prism-code`、`.xterm`、`<pre>`、`<code>`，用户编码与命令行输入输出绝对不受汉化篡改。
+   - 严格排除 `.monaco-editor`、`.monaco-diff-editor`、`.prism-code`、`.xterm`、`<pre>`、`<code>`，用户编码与命令行输入输出绝对不受汉化篡改。
 
 ---
 
-## 三、 已知失效 / 不稳定功能
+## 三、 已知失效 / 不稳定功能与边界条件
 
-1. **运行期“热生效”需要重启窗口**：
+1. **运行期热替换感知滞后**：
    - 由于 Electron 主进程在启动时即将 `dist/utils.js` 和 `dist/menu.js` 加载入 Node 模块缓存，若在客户端运行途中由更新程序替换了 `app.asar`，必须关闭并重新打开 Antigravity，补丁代码方能被主进程初始化。
-2. **子页面 / 外部 Webview 隔离**：
-   - 某些独立 iframe 或插件面板（例如特定三方扩展自带的独立 UI 视图）若未继承主窗口注入逻辑，可能需要专属的 Preload 挂载点。
+2. **Windows 独占锁定限制**：
+   - 当 Antigravity.exe 正在前台运行时，Windows 操作系统会锁定 `app.asar`。此时直接执行 `os.replace` 会被系统拒绝访问（WinError 5）。因此自愈与补丁必须且只能在应用完全退出后执行（Watcher 与 Launcher 已严格保证该时序）。
 
 ---
 
@@ -68,10 +71,10 @@
    - `common.py`：通用启发式匹配；
    - `fallback.py`：全包扫描容灾兜底。
 4. **防御性安全机制 (Fail-Safe)**：
-   - 注入前备份官方版本至外部隔离区；
-   - 修改后强制通过 `node --check` 语法分析；
-   - ASAR 头部有效性与入口关键文件校验；
-   - 任意环节异常自动触发 `restore_official_clean()`，保证官方程序随时可用。
+   - 注入前对候选版本严格执行稳定性与完整性分析；
+   - 修改后强制通过 JS 语法分析与 Marker 校验；
+   - 目标目录构建 ➔ 校验 ➔ `os.replace` 原子替换；
+   - 任意环节异常自动触发回滚或保留原文件，保证官方程序随时可用。
 
 ---
 
@@ -92,20 +95,17 @@
 
 1. **前端 TreeWalker 全量重扫策略**：
    - 当前在 `window.addEventListener('click')` 时会微延迟执行一次 `translateTree(document.body)`。虽然在现代多核 CPU 上执行仅耗时数毫秒，但后续可优化为仅针对点击相关的局部容器进行定向补扫。
-2. **Preload 独立直连机制尚未完全启用为第一优先级**：
-   - 当前主要注入点为 `dist/utils.js` 的 `webContents.executeJavaScript`。Preload 注入作为备选机制。如果未来将 Preload 提升为主要注入点，将无需在主进程拦截 window 实例。
-3. **跨平台适配**：
+2. **跨平台启动器支持**：
    - 当前主要针对 Windows 系统环境（路径探测、批处理启动器 `agy-launch.bat`）。后续可增加 macOS (`.sh` / `.command`) 与 Linux 启动器的开箱即用支持。
 
 ---
 
-## 八、 最近一次修改内容
+## 八、 最近一次修改内容（P0 / P1 可靠性加固）
 
-- **重构汉化系统为自愈式架构**：
-  - 新增 `core/` 独立体系，解耦官方安装目录；
-  - 新增版本与 SHA-256 检测与 `state.json` 状态库；
-  - 新增 `AsarArchive` 纯 Python 二进制打包与完整性校验模块；
-  - 新增 `common`, `fallback`, `v2.24` 多适配器分层设计；
-  - 新增 `launcher.py`、`agy-launch.bat` 与后台守护服务 `watcher/service.py`；
-  - 新增统一运维 CLI `cli.py` (`status`, `verify`, `repair`, `install`, `restore`, `watch`, `launch`)；
-  - 完成全生命周期自愈与安全回滚端到端测试。
+- **P0-1 官方纯净备份安全加固**：新增 `validate_official_candidate()`，防止官方更新写入途中将截断或损坏文件误当纯净备份覆盖。
+- **P0-2 修复 Fallback 假成功**：修改 `fallback.py` 与 `common.py`，强制以 UI 注入成功作为核心成功的必要前提，仅菜单成功时判定整体失败。
+- **P0-3 Watcher 超时熔断**：Watcher 等待退出超时后阻断当轮补丁操作并记录 warning 日志，严禁在客户端运行时并发修改核心文件。
+- **P0-4 真正安全的原子替换**：同目录构建临时文件 ➔ 完整性与汉化 Marker 校验 ➔ `os.replace()` 原子替换，杜绝文件损坏风险。
+- **P1-1 状态文件与仓库解耦**：`state.json` 加入 `.gitignore`，提供 `state.example.json`，实现无 state 状态下的平滑自初始化。
+- **P1-2 Validator 增强**：强化 Marker 存在性检查与 `expected_files` 验证，缺少 Node 时明确标出 `degraded verification`。
+- **P1-3 文档与测试口径校准**：将“全生命周期自愈测试 100% 通过”修正为“核心文件自愈注入闭环测试通过”，新建 `core/test_suite.py` 覆盖 10 项严苛边界用例并全部通过。

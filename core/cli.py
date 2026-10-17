@@ -83,7 +83,8 @@ def cmd_verify(args):
         if '__chineseTranslatorScript' in txt:
             ui_injected = True
             ok_syn, smsg = check_js_syntax(txt)
-            print(f"• 主渲染调度注入 (/dist/utils.js): \033[92m正常 (语法: {smsg})\033[0m")
+            color = "\033[93m" if "degraded" in smsg else "\033[92m"
+            print(f"• 主渲染调度注入 (/dist/utils.js): {color}{smsg}\033[0m")
         else:
             print(f"• 主渲染调度注入 (/dist/utils.js): \033[93m未检测到\033[0m")
 
@@ -92,14 +93,16 @@ def cmd_verify(args):
         if '__antigravity_chinese_active' in txt:
             ui_injected = True
             ok_syn, smsg = check_js_syntax(txt)
-            print(f"• Preload 渲染注入 (/dist/preload.js): \033[92m正常 (语法: {smsg})\033[0m")
+            color = "\033[93m" if "degraded" in smsg else "\033[92m"
+            print(f"• Preload 渲染注入 (/dist/preload.js): {color}{smsg}\033[0m")
 
     if archive.has_file('/dist/menu.js'):
         txt = archive.read_text('/dist/menu.js')
         if 'translateMenu' in txt:
             menu_injected = True
             ok_syn, smsg = check_js_syntax(txt)
-            print(f"• 原生应用菜单汉化 (/dist/menu.js): \033[92m正常 (语法: {smsg})\033[0m")
+            color = "\033[93m" if "degraded" in smsg else "\033[92m"
+            print(f"• 原生应用菜单汉化 (/dist/menu.js): {color}{smsg}\033[0m")
         else:
             print(f"• 原生应用菜单汉化 (/dist/menu.js): \033[93m未检测到\033[0m")
 
