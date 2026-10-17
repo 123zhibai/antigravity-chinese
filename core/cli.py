@@ -45,7 +45,8 @@ def cmd_status(args):
     
     status_text = "\033[92m已成功汉化 (生效中)\033[0m" if st['is_patched'] else "\033[93m官方英文原版 (未汉化)\033[0m"
     print(f"当前汉化状态: {status_text}")
-    print(f"官方纯净备份: {'存在 (' + st['clean_hash'][:10] + '...)' if st['clean_backup_exists'] else '未创建'}")
+    clean_ver_info = f" [绑定版本: {st['clean_backup_version']}]" if st.get('clean_backup_version') else ""
+    print(f"官方纯净备份: {'存在 (' + st['clean_hash'][:10] + '...)' + clean_ver_info if st['clean_backup_exists'] else '未创建'}")
     
     if st['has_update']:
         print(f"\033[91m[提示] 检测到官方程序发生了版本更新，当前汉化已脱轨，建议运行 repair 或使用 launcher 启动！\033[0m")

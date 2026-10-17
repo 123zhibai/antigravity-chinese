@@ -14,9 +14,9 @@
 
 ## 🏷️ 二、 当前版本状态
 
-- **插件版本**：`v3.1.0-hardened-baseline`
+- **插件版本**：`v3.2.0-cross-version-guarded`
 - **适配宿主版本**：Google Antigravity 2.24.0 (Windows x64 Desktop)
-- **基线状态**：可靠性加固稳定基线版本（已通过候选版本安全性验证、超时熔断、原子替换、语法分析与 10 项核心边界自动化测试）。
+- **基线状态**：可靠性加固与跨版本防护稳定基线（具备候选版本安全性验证、**跨版本 Fail-Closed 拦截防混淆**、超时熔断、原子替换、语法分析与 13 项核心自动化测试）。
 
 ---
 
@@ -152,6 +152,11 @@ antigravity-chinese/
    若官方未来改写窗口创建函数，或不再使用 `win.on('page-title-updated')` 或 `win.webContents.on('did-finish-load')` 等事件钩子，可能导致注入点特征失效。
 3. **原生菜单设置位置变动**：
    若官方移除了 `Menu.setApplicationMenu(menu)` 或改由异步延迟设置，菜单汉化可能需要适配新的调用点。
+4. **跨版本防护与 Fail-Closed 安全熔断**：
+   若官方升级跨越大版本（如从 2.24 升级至 2.25）且新版候选文件因结构剧变未通过 `validate_official_candidate` 验证，系统将执行严格的 Fail-Closed 熔断：
+   - **立即中止补丁构建**：严禁调用 `os.replace` 破坏正式文件；
+   - **禁止旧备份跨版本混淆**：旧版本 `official_clean_app.asar` 仅限恢复用途，严禁跨版本作为 patch base（彻底防范“2.25 EXE + 2.24 ASAR”错配崩溃）；
+   - **状态双向保全**：正式文件保持官方最新原版，旧版备份完好保留，提示用户更新适配规则。
 
 ---
 

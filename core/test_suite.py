@@ -271,5 +271,129 @@ class HardeningReliabilityTests(unittest.TestCase):
         self.assertTrue(heal_ok, f"自愈注入应当成功: {heal_msg}")
         self.assertTrue(check_asar_is_patched(sandbox_target), "自愈后必须恢复汉化状态")
 
+    # -------------------------------------------------------------
+    # 跨版本防护与 Fail-Closed 机制专项测试 (测试 A, B, C)
+    # -------------------------------------------------------------
+    def test_a_unknown_new_version_with_old_backup_fail_closed(self):
+        """测试 A: 未知新版 (2.25) candidate 验证失败时，立即中止，严禁使用旧版 (2.24) backup 构建，正式文件与旧 backup 保持原样"""
+        sandbox_clean = os.path.join(self.temp_dir, "clean_old_2_24.asar")
+        sandbox_target = os.path.join(self.temp_dir, "unknown_2_25_target.asar")
+
+        # 复制旧版 clean backup (2.24)
+        shutil.copy2(self.clean_backup, sandbox_clean)
+        clean_orig_hash = sha256_file(sandbox_clean)
+
+        # 模拟 2.25 新版 official candidate 未通过 candidate 验证（例如结构不合规或缺少关键入口）
+        with open(sandbox_target, 'wb') as f:
+            f.write(b"CORRUPTED_OR_UNKNOWN_NEW_VERSION_STRUCTURE" * 200)
+        target_orig_hash = sha256_file(sandbox_target)
+
+        custom_state = {
+            "clean_backup_version": "2.24.0",
+            "antigravity_version": "2.24.0",
+            "official_clean_sha256": clean_orig_hash
+        }
+
+        ok, msg = perform_patch(
+            force=True,
+            custom_target_asar=sandbox_target,
+            custom_clean_backup=sandbox_clean,
+            custom_version="2.25.0",
+            custom_state=custom_state
+        )
+
+        # 1. 断言 perform_patch 立即中止并返回失败
+        self.assertFalse(ok, "新版候选验证失败时必须立即中止本次 patch")
+
+        # 2. 断言包含指定的安全提示文案
+        self.assertIn("检测到新的 Antigravity 版本或未知核心结构", msg)
+        self.assertIn("当前版本尚未通过兼容性验证", msg)
+        self.assertIn("为防止旧版本核心文件覆盖新版客户端，本次汉化已安全停止", msg)
+        self.assertIn("官方当前文件未被修改", msg)
+        self.assertIn("旧版本 clean backup 已保留，仅供恢复使用", msg)
+        self.assertIn("请先更新对应版本 Adapter 或兼容规则", msg)
+
+        # 3. 断言当前正式文件保持原样，不被修改
+        self.assertEqual(sha256_file(sandbox_target), target_orig_hash, "当前正式文件必须保持原样")
+        self.assertFalse(check_asar_is_patched(sandbox_target), "当前正式文件绝不能被打上补丁")
+
+        # 4. 断言原 clean backup 保持原样，且版本绑定未被篡改
+        self.assertEqual(sha256_file(sandbox_clean), clean_orig_hash, "旧版 clean backup 必须完好保留")
+        self.assertEqual(custom_state.get("clean_backup_version"), "2.24.0", "clean_backup_version 必须保持 2.24.0")
+
+        # 5. 断言未残留任何 patch 临时文件
+        self.assertFalse(os.path.exists(sandbox_target + ".patch_tmp"), "不得残留任何临时补丁文件")
+
+    def test_b_same_version_backup_allows_patch(self):
+        """测试 B: 同版本 (2.24 == 2.24) 时，允许使用 clean backup 作为 base 正常打补丁"""
+        sandbox_clean = os.path.join(self.temp_dir, "clean_same_ver.asar")
+        sandbox_target = os.path.join(self.temp_dir, "target_same_ver.asar")
+        shutil.copy2(self.clean_backup, sandbox_clean)
+        shutil.copy2(self.clean_backup, sandbox_target)
+
+        custom_state = {
+            "clean_backup_version": "2.24.0",
+            "antigravity_version": "2.24.0",
+            "official_clean_sha256": sha256_file(sandbox_clean)
+        }
+
+        ok, msg = perform_patch(
+            force=True,
+            custom_target_asar=sandbox_target,
+            custom_clean_backup=sandbox_clean,
+            custom_version="2.24.0",
+            custom_state=custom_state
+        )
+
+        self.assertTrue(ok, f"同版本 clean backup 应当允许构建补丁: {msg}")
+        self.assertTrue(check_asar_is_patched(sandbox_target), "目标文件必须已成功汉化")
+        self.assertEqual(custom_state.get("clean_backup_version"), "2.24.0")
+        self.assertEqual(custom_state.get("current_status"), "patched")
+
+    def test_c_new_version_candidate_validated_updates_backup_and_patches(self):
+        """测试 C: 新版 (2.25) 候选验证成功时，正常更新 clean backup 与版本绑定，并基于新版 backup 成功补丁"""
+        sandbox_clean = os.path.join(self.temp_dir, "clean_old.asar")
+        sandbox_target = os.path.join(self.temp_dir, "target_new_2_25.asar")
+
+        # 初始 clean backup 为旧版 (2.24)
+        shutil.copy2(self.clean_backup, sandbox_clean)
+        old_clean_hash = sha256_file(sandbox_clean)
+
+        # 构造一个符合 validate_official_candidate 的合法 2.25 官方未汉化 ASAR
+        shutil.copy2(self.clean_backup, sandbox_target)
+        archive = AsarArchive(sandbox_target)
+        archive.write_text('/package.json', json.dumps({"name": "antigravity", "version": "2.25.0"}))
+        archive.save(sandbox_target)
+        new_official_hash = sha256_file(sandbox_target)
+        self.assertNotEqual(old_clean_hash, new_official_hash)
+
+        # 验证构造的新版候选通过验证
+        cand_ok, cand_msg = validate_official_candidate(sandbox_target, check_stability=False)
+        self.assertTrue(cand_ok, f"构造的新版应当通过官方候选验证: {cand_msg}")
+
+        custom_state = {
+            "clean_backup_version": "2.24.0",
+            "antigravity_version": "2.24.0",
+            "official_clean_sha256": old_clean_hash
+        }
+
+        # 执行 patch
+        ok, msg = perform_patch(
+            force=True,
+            custom_target_asar=sandbox_target,
+            custom_clean_backup=sandbox_clean,
+            custom_version="2.25.0",
+            custom_state=custom_state
+        )
+
+        self.assertTrue(ok, f"新版候选通过时应成功执行汉化: {msg}")
+        # 1. 断言 clean backup 已更新为 2.25 官方版本
+        self.assertEqual(sha256_file(sandbox_clean), new_official_hash, "clean backup 必须已更新为新版官方 ASAR")
+        # 2. 断言 clean_backup_version 已更新为 2.25.0
+        self.assertEqual(custom_state.get("clean_backup_version"), "2.25.0", "clean_backup_version 必须已更新为 2.25.0")
+        self.assertEqual(custom_state.get("official_clean_sha256"), new_official_hash)
+        # 3. 断言正式文件成功打上汉化补丁
+        self.assertTrue(check_asar_is_patched(sandbox_target), "新版目标 ASAR 应当成功注入汉化")
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

@@ -18,6 +18,7 @@ def load_state():
     paths = get_paths()
     default_state = {
         "antigravity_version": None,
+        "clean_backup_version": None,
         "official_clean_sha256": None,
         "patched_sha256": None,
         "current_status": "uninitialized",
@@ -117,6 +118,7 @@ def get_current_status():
         "current_hash": curr_hash,
         "is_patched": is_patched,
         "clean_backup_exists": os.path.exists(paths['clean_backup_asar']),
+        "clean_backup_version": state.get("clean_backup_version"),
         "clean_hash": clean_hash,
         "has_update": has_update,
         "last_patch_time": state.get('last_patch_time'),

@@ -2,9 +2,9 @@
 
 > **审计目的**：供开发者与 AI 审计工具直接读取，以核查当前工程真实实现状态、识别薄弱环节并指导后续针对性升级。  
 > **记录基准时间**：2026-10-17  
-> **基线维护版本**：`v3.1.0-hardened-baseline`  
-> **前置 Commit**：`af68f99d52f58156b92680ed0ad25e6df1028694`  
-> **当前维护状态**：已完成全部 P0 核心安全链路（备份保护、成功判定、超时阻断、原子替换）与 P1 维护性（状态解耦、校验强化、口径校准）加固，具备作为长期稳定维护基线的条件。
+> **基线维护版本**：`v3.2.0-cross-version-guarded`  
+> **前置 Commit**：`452e14e docs: align audit baseline with verified capabilities`  
+> **当前维护状态**：已完成全部 P0 核心安全链路、P1 维护性加固，以及**跨版本 Fail-Closed 隔离防护专项升级（禁止旧版 clean backup 跨版本用于未知新版打补丁）**，全量自动化套件 13 项测试 100% 通过。
 
 ---
 
@@ -12,7 +12,8 @@
 
 - **宿主程序版本**：Google Antigravity `2.24.0` (`ProductVersion: 2.24.0.0`, `FileVersion: 2.24.0`)
 - **宿主架构**：Windows x64 Desktop (Electron)
-- **汉化系统版本**：`v3.1.0-hardened-baseline`
+- **汉化系统版本**：`v3.2.0-cross-version-guarded`
+- **Clean Backup 绑定版本**：`2.24.0`
 - **当前官方核心文件 SHA-256**：`bd10a0054ca3ad469142b2c2757566493ecc0afb934b9a61ce45d38a4d09316e` (4,486,221 字节)
 - **补丁注入后核心文件 SHA-256**：`d031dc1e5465b6b1c5fc8fa340ed9e4045a58f0267bdae710f980bb8763fd7d5`
 
@@ -38,7 +39,8 @@
    - **真正安全的原子文件替换 (P0-4)**：`构建临时文件 ➔ 完整性与汉化 Marker 校验 ➔ 同目录临时文件 ➔ os.replace()`，确保校验失败或异常时正式文件丝毫不受损，无残留 `.patch_tmp`；
    - **仓库基线解耦 (P1-1)**：`core/state.json` 已移入 `.gitignore`，新增 `core/state.example.json`，即使全新 clone 无 state 文件系统亦能平滑自初始化并正常运行；
    - **增强校验器 (P1-2)**：增加 UI marker 校验、expected_files 检查，并在缺少 Node.js 时返回明确的 `degraded verification` 标识；
-   - **综合测试套件 (P1-3)**：建立覆盖 10 大核心边界条件的 `core/test_suite.py`，全部测试 100% 通过。
+   - **跨版本 Fail-Closed 隔离防护**：强制给 clean backup 绑定宿主版本（`clean_backup_version`），严禁跨版本默认作为 patch base。当未汉化文件未通过候选验证时，立即中止补丁、保持正式文件与旧备份原样，并给出安全停机提示；
+   - **综合测试套件**：自动化测试套件扩充至 13 项（含测试 A：未知新版+旧 backup 阻断拦截；测试 B：同版本 backup 正常注入；测试 C：新版候选验证成功后更新 backup 与版本绑定并注入），全部测试 100% 通过。
 4. **代码与终端环境防护**：
    - 严格排除 `.monaco-editor`、`.monaco-diff-editor`、`.prism-code`、`.xterm`、`<pre>`、`<code>`，用户编码与命令行输入输出绝对不受汉化篡改。
 
@@ -109,3 +111,25 @@
 - **P1-1 状态文件与仓库解耦**：`state.json` 加入 `.gitignore`，提供 `state.example.json`，实现无 state 状态下的平滑自初始化。
 - **P1-2 Validator 增强**：强化 Marker 存在性检查与 `expected_files` 验证，缺少 Node 时明确标出 `degraded verification`。
 - **P1-3 文档与测试口径校准**：将“全生命周期自愈测试 100% 通过”修正为“核心文件自愈注入闭环测试通过”，新建 `core/test_suite.py` 覆盖 10 项严苛边界用例并全部通过。
+
+---
+
+## 九、 跨版本安全防护与 Fail-Closed 策略专项升级
+
+1. **旧版本 Clean Backup 明确定位**：
+   - 确立为“恢复用途优先，严禁默认跨版本作为 patch base”。
+   - 彻底移除了“候选校验失败后自动回退使用既有旧备份打补丁”的危险逻辑。
+2. **宿主版本强绑定机制**：
+   - 在状态体系中持久化记录 `clean_backup_version`。
+   - 执行 patch 构建时必须校验 `current_ver == clean_backup_version`，一旦检测到错配直接熔断停机。
+3. **未汉化新版候选校验 Fail-Closed 拦截**：
+   - 当检测到未汉化的 `app.asar` 无法通过 `validate_official_candidate()` 时：
+     - 立即终止本次 `perform_patch()`，返回明确失败；
+     - 拒绝使用已有旧 clean backup 构建补丁；
+     - 拒绝调用最终 `os.replace()`，正式 `app.asar` 保持未修改；
+     - 原 clean backup 保持未修改，仅留作恢复用途；
+     - 输出标准清晰的友好排查与升级提示。
+4. **自动化测试套件扩充至 13 项且全部通过**：
+   - **测试 A (`test_a_unknown_new_version_with_old_backup_fail_closed`)**：模拟 current 2.25 + backup 2.24 + 候选验证失败，断言立即中止、正式文件未修改、旧 backup 保留、安全提示完备；
+   - **测试 B (`test_b_same_version_backup_allows_patch`)**：模拟 current 2.24 + backup 2.24，断言同版本正常基于 backup 构建且补丁生效；
+   - **测试 C (`test_c_new_version_candidate_validated_updates_backup_and_patches`)**：模拟 current 2.25 + backup 2.24 + 候选验证通过，断言 clean backup 正常升级为 2.25、版本绑定同步更新至 2.25 并成功打补丁。
