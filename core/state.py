@@ -16,22 +16,43 @@ except ImportError:
 
 def load_state():
     paths = get_paths()
-    if not paths or not os.path.exists(paths['state_file']):
-        return {
-            "antigravity_version": None,
-            "official_clean_sha256": None,
-            "patched_sha256": None,
-            "current_status": "uninitialized",
-            "last_patch_time": None,
-            "last_patch_adapter": None,
-            "patched_files": [],
-            "total_self_healing_count": 0
-        }
-    try:
-        with open(paths['state_file'], 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except Exception:
-        return {}
+    default_state = {
+        "antigravity_version": None,
+        "official_clean_sha256": None,
+        "patched_sha256": None,
+        "current_status": "uninitialized",
+        "last_patch_time": None,
+        "last_patch_adapter": None,
+        "patched_files": [],
+        "total_self_healing_count": 0
+    }
+    if not paths:
+        return default_state
+
+    state_file = paths['state_file']
+    if os.path.exists(state_file):
+        try:
+            with open(state_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    merged = default_state.copy()
+                    merged.update(data)
+                    return merged
+        except Exception:
+            pass
+
+    # 若 state.json 尚不存在，尝试加载 state.example.json 作为初始结构
+    example_file = os.path.join(paths['core_dir'], 'state.example.json')
+    if os.path.exists(example_file):
+        try:
+            with open(example_file, 'r', encoding='utf-8') as f:
+                ex_data = json.load(f)
+                if isinstance(ex_data, dict):
+                    return ex_data
+        except Exception:
+            pass
+
+    return default_state
 
 def save_state(state_dict):
     paths = get_paths()

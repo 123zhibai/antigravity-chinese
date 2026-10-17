@@ -11,6 +11,9 @@ __pycache__/
 core/logs/*.log
 !core/logs/.gitkeep
 
+# 本机运行期状态文件（与 Git 仓库基线解耦）
+core/state.json
+
 # 官方大体积二进制包备份（由自愈系统动态在本地生成，不进入 Git 仓库）
 core/backups/*.asar
 !core/backups/.gitkeep
