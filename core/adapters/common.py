@@ -116,7 +116,10 @@ function translateMenu(m) {{
                         self.patched_files.append('/dist/menu.js')
                         break
 
-        if injected_ui:
-            return True, self.patched_files, "通用适配器注入成功"
+        if injected_ui and injected_menu:
+            return True, self.patched_files, "通用适配器完整注入成功 (UI + 菜单)"
+        elif injected_ui:
+            return True, self.patched_files, "通用适配器 UI 注入成功 (主菜单未匹配)"
         else:
-            return False, [], "通用适配器未能匹配到渲染注入点"
+            msg = "通用适配器仅主菜单匹配成功，UI 核心注入点未找到，判定注入失败" if injected_menu else "通用适配器未能匹配到渲染注入点"
+            return False, [], msg

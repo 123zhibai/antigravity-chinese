@@ -90,6 +90,10 @@ __patchMenu({menu_arg});
                     self.patched_files.append(path)
                     break
 
-        if injected_ui or injected_menu:
-            return True, self.patched_files, "兜底自适应适配器注入成功"
-        return False, [], "兜底自适应适配器未找到可用入口"
+        if injected_ui and injected_menu:
+            return True, self.patched_files, "兜底自适应适配器完整注入成功 (UI + 菜单)"
+        elif injected_ui:
+            return True, self.patched_files, "兜底自适应适配器 UI 注入成功 (主菜单未匹配)"
+        else:
+            msg = "兜底适配器仅主菜单匹配成功，UI 核心注入点未找到，判定注入失败" if injected_menu else "兜底自适应适配器未找到可用入口"
+            return False, [], msg
