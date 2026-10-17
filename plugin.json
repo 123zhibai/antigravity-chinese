@@ -1,0 +1,12 @@
+{
+  "name": "antigravity-chinese-pack",
+  "displayName": "Antigravity 中文汉化与助手增强包",
+  "version": "1.0.0",
+  "description": "专为中文用户打造的 Antigravity 官方增强插件：提供全流程中文交互规则体系、专业级中文开发与代码注释工具、报错诊断与中英术语库，以及桌面端界面一键汉化套件。",
+  "logo": "assets/logo.png",
+  "suggestedPrompts": [
+    "为当前代码生成规范的中文架构解析与文档注释",
+    "解析终端报错信息并提供通俗易懂的中文诊断方案",
+    "根据最近代码变更生成规范的中文 Git 提交信息"
+  ]
+}
