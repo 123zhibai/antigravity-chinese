@@ -395,5 +395,107 @@ class HardeningReliabilityTests(unittest.TestCase):
         # 3. 断言正式文件成功打上汉化补丁
         self.assertTrue(check_asar_is_patched(sandbox_target), "新版目标 ASAR 应当成功注入汉化")
 
+    # -------------------------------------------------------------
+    # 跨版本 Restore 防护与 Fail-Closed 专项测试 (测试 D, E, F)
+    # -------------------------------------------------------------
+    def test_d_cross_version_restore_aborts(self):
+        """测试 D: 跨版本 (current 2.25, backup 2.24) restore 立即阻断，不替换正式文件且原备份不变"""
+        sandbox_clean = os.path.join(self.temp_dir, "clean_old_2_24.asar")
+        sandbox_target = os.path.join(self.temp_dir, "target_new_2_25.asar")
+        shutil.copy2(self.clean_backup, sandbox_clean)
+        shutil.copy2(self.target_asar, sandbox_target)
+
+        clean_hash_before = sha256_file(sandbox_clean)
+        target_hash_before = sha256_file(sandbox_target)
+
+        custom_state = {
+            "clean_backup_version": "2.24.0",
+            "antigravity_version": "2.24.0"
+        }
+
+        ok, msg = restore_official_clean(
+            custom_target_asar=sandbox_target,
+            custom_clean_backup=sandbox_clean,
+            custom_version="2.25.0",
+            custom_state=custom_state
+        )
+
+        # 1. 断言 restore 返回 False
+        self.assertFalse(ok, "跨版本 restore 必须被拦截并返回 False")
+        # 2. 断言包含版本不匹配提示
+        self.assertIn("检测到官方备份版本与当前 Antigravity 客户端版本不一致", msg)
+        self.assertIn("为防止旧版核心文件覆盖新版客户端，本次恢复已安全停止", msg)
+        self.assertIn("当前 app.asar 未被修改", msg)
+        self.assertIn("旧版 clean backup 仍被保留", msg)
+        # 3. 断言正式 app.asar Hash 不变
+        self.assertEqual(sha256_file(sandbox_target), target_hash_before, "正式 app.asar Hash 必须保持不变")
+        # 4. 断言 clean backup Hash 不变
+        self.assertEqual(sha256_file(sandbox_clean), clean_hash_before, "clean backup Hash 必须保持不变")
+        # 5. 断言未执行替换，无临时文件残留
+        self.assertFalse(os.path.exists(sandbox_target + ".restore_tmp"), "不得残留任何临时恢复文件")
+
+    def test_e_same_version_restore_succeeds(self):
+        """测试 E: 同版本 (current 2.24, backup 2.24) restore 正常执行成功"""
+        sandbox_clean = os.path.join(self.temp_dir, "clean_same_2_24.asar")
+        sandbox_target = os.path.join(self.temp_dir, "target_same_2_24.asar")
+        shutil.copy2(self.clean_backup, sandbox_clean)
+        shutil.copy2(self.target_asar, sandbox_target)
+
+        clean_hash = sha256_file(sandbox_clean)
+
+        custom_state = {
+            "clean_backup_version": "2.24.0",
+            "antigravity_version": "2.24.0"
+        }
+
+        ok, msg = restore_official_clean(
+            custom_target_asar=sandbox_target,
+            custom_clean_backup=sandbox_clean,
+            custom_version="2.24.0",
+            custom_state=custom_state
+        )
+
+        # 1. 验证 restore 正常成功
+        self.assertTrue(ok, f"同版本 restore 应当成功: {msg}")
+        self.assertIn("已成功安全恢复为 Antigravity 官方原版英文界面", msg)
+        # 2. 目标文件被恢复为官方原版，Hash 与 clean_backup 一致
+        self.assertEqual(sha256_file(sandbox_target), clean_hash, "恢复后目标文件应当与 clean backup 完全一致")
+        self.assertFalse(check_asar_is_patched(sandbox_target), "恢复后目标文件应当为未汉化状态")
+        self.assertEqual(custom_state.get('current_status'), "official_clean")
+
+    def test_f_unknown_backup_version_restore_aborts_fail_closed(self):
+        """测试 F: backup 版本未知 (clean_backup_version = None) 触发 Fail-Closed 默认禁止 restore"""
+        sandbox_clean = os.path.join(self.temp_dir, "clean_unknown_ver.asar")
+        sandbox_target = os.path.join(self.temp_dir, "target_unknown_ver.asar")
+        shutil.copy2(self.clean_backup, sandbox_clean)
+        shutil.copy2(self.target_asar, sandbox_target)
+
+        clean_hash_before = sha256_file(sandbox_clean)
+        target_hash_before = sha256_file(sandbox_target)
+
+        custom_state = {
+            "clean_backup_version": None,
+            "antigravity_version": None
+        }
+
+        ok, msg = restore_official_clean(
+            custom_target_asar=sandbox_target,
+            custom_clean_backup=sandbox_clean,
+            custom_version="2.24.0",
+            custom_state=custom_state
+        )
+
+        # 1. 验证默认禁止 restore，返回 False
+        self.assertFalse(ok, "版本未知时必须 Fail-Closed 默认禁止 restore")
+        # 2. 验证返回“无法确认备份版本”的安全提示
+        self.assertIn("无法确认官方备份与当前 Antigravity 客户端的版本兼容性", msg)
+        self.assertIn("本次恢复已安全停止", msg)
+        self.assertIn("当前 app.asar 未被修改", msg)
+        self.assertIn("clean backup 仍被保留", msg)
+        # 3. 验证正式文件与 backup 文件完全未改变
+        self.assertEqual(sha256_file(sandbox_target), target_hash_before, "目标文件不得被修改")
+        self.assertEqual(sha256_file(sandbox_clean), clean_hash_before, "backup 文件不得被修改")
+        self.assertFalse(os.path.exists(sandbox_target + ".restore_tmp"))
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

@@ -2,9 +2,9 @@
 
 > **审计目的**：供开发者与 AI 审计工具直接读取，以核查当前工程真实实现状态、识别薄弱环节并指导后续针对性升级。  
 > **记录基准时间**：2026-10-17  
-> **基线维护版本**：`v3.2.0-cross-version-guarded`  
-> **前置 Commit**：`452e14e docs: align audit baseline with verified capabilities`  
-> **当前维护状态**：已完成全部 P0 核心安全链路、P1 维护性加固，以及**跨版本 Fail-Closed 隔离防护专项升级（禁止旧版 clean backup 跨版本用于未知新版打补丁）**，全量自动化套件 13 项测试 100% 通过。
+> **基线维护版本**：`v3.3.0-restore-guarded`  
+> **前置 Commit**：`7d8b2ae fix(core): prevent cross-version clean backup patching on unknown versions`  
+> **当前维护状态**：已完成全部 P0 核心安全链路、P1 维护性加固、跨版本 Patch 熔断隔离，以及**Restore 跨版本防御与 Fail-Closed 闭环升级（禁止旧版 clean backup 跨版本 restore 回写新版客户端）**，全量自动化套件 16 项测试 100% 通过。
 
 ---
 
@@ -12,7 +12,7 @@
 
 - **宿主程序版本**：Google Antigravity `2.24.0` (`ProductVersion: 2.24.0.0`, `FileVersion: 2.24.0`)
 - **宿主架构**：Windows x64 Desktop (Electron)
-- **汉化系统版本**：`v3.2.0-cross-version-guarded`
+- **汉化系统版本**：`v3.3.0-restore-guarded`
 - **Clean Backup 绑定版本**：`2.24.0`
 - **当前官方核心文件 SHA-256**：`bd10a0054ca3ad469142b2c2757566493ecc0afb934b9a61ce45d38a4d09316e` (4,486,221 字节)
 - **补丁注入后核心文件 SHA-256**：`d031dc1e5465b6b1c5fc8fa340ed9e4045a58f0267bdae710f980bb8763fd7d5`
@@ -39,8 +39,8 @@
    - **真正安全的原子文件替换 (P0-4)**：`构建临时文件 ➔ 完整性与汉化 Marker 校验 ➔ 同目录临时文件 ➔ os.replace()`，确保校验失败或异常时正式文件丝毫不受损，无残留 `.patch_tmp`；
    - **仓库基线解耦 (P1-1)**：`core/state.json` 已移入 `.gitignore`，新增 `core/state.example.json`，即使全新 clone 无 state 文件系统亦能平滑自初始化并正常运行；
    - **增强校验器 (P1-2)**：增加 UI marker 校验、expected_files 检查，并在缺少 Node.js 时返回明确的 `degraded verification` 标识；
-   - **跨版本 Fail-Closed 隔离防护**：强制给 clean backup 绑定宿主版本（`clean_backup_version`），严禁跨版本默认作为 patch base。当未汉化文件未通过候选验证时，立即中止补丁、保持正式文件与旧备份原样，并给出安全停机提示；
-   - **综合测试套件**：自动化测试套件扩充至 13 项（含测试 A：未知新版+旧 backup 阻断拦截；测试 B：同版本 backup 正常注入；测试 C：新版候选验证成功后更新 backup 与版本绑定并注入），全部测试 100% 通过。
+   - **跨版本 Fail-Closed 全链路隔离**：强制将 clean backup 与宿主版本绑定（`clean_backup_version`），无论是 Patch 注入还是 Restore 恢复，只要发生版本不一致或版本未知，均默认立即中止并保留原正式文件与备份；
+   - **综合测试套件**：自动化测试套件扩充至 16 项（覆盖测试 A/B/C Patch 跨版本拦截、测试 D/E/F Restore 跨版本与未知版本拦截），全部测试 100% 通过。
 4. **代码与终端环境防护**：
    - 严格排除 `.monaco-editor`、`.monaco-diff-editor`、`.prism-code`、`.xterm`、`<pre>`、`<code>`，用户编码与命令行输入输出绝对不受汉化篡改。
 
@@ -129,7 +129,25 @@
      - 拒绝调用最终 `os.replace()`，正式 `app.asar` 保持未修改；
      - 原 clean backup 保持未修改，仅留作恢复用途；
      - 输出标准清晰的友好排查与升级提示。
-4. **自动化测试套件扩充至 13 项且全部通过**：
+4. **自动化测试套件扩充至 16 项且全部通过**：
    - **测试 A (`test_a_unknown_new_version_with_old_backup_fail_closed`)**：模拟 current 2.25 + backup 2.24 + 候选验证失败，断言立即中止、正式文件未修改、旧 backup 保留、安全提示完备；
    - **测试 B (`test_b_same_version_backup_allows_patch`)**：模拟 current 2.24 + backup 2.24，断言同版本正常基于 backup 构建且补丁生效；
-   - **测试 C (`test_c_new_version_candidate_validated_updates_backup_and_patches`)**：模拟 current 2.25 + backup 2.24 + 候选验证通过，断言 clean backup 正常升级为 2.25、版本绑定同步更新至 2.25 并成功打补丁。
+   - **测试 C (`test_c_new_version_candidate_validated_updates_backup_and_patches`)**：模拟 current 2.25 + backup 2.24 + 候选验证通过，断言 clean backup 正常升级为 2.25、版本绑定同步更新至 2.25 并成功打补丁；
+   - **测试 D (`test_d_cross_version_restore_aborts`)**：模拟 current 2.25 + backup 2.24，断言跨版本 restore 立即中止，正式文件与备份 Hash 不变，输出版本错配提示；
+   - **测试 E (`test_e_same_version_restore_succeeds`)**：模拟 current 2.24 + backup 2.24，断言同版本 restore 正常恢复官方纯净状态；
+   - **测试 F (`test_f_unknown_backup_version_restore_aborts_fail_closed`)**：模拟 backup 版本未知 (`clean_backup_version = None`)，断言 Fail-Closed 默认禁止 restore 并输出安全警告。
+
+---
+
+## 十、 Restore 跨版本防御与 Fail-Closed 闭环升级
+
+1. **Restore 跨版本拦截 (`restore_official_clean`)**：
+   - 在执行备份恢复与 `os.replace` 之前，强制读取当前客户端版本与备份绑定版本；
+   - 校验 `current_ver == clean_backup_version`，只有明确一致时方允许执行文件覆盖；
+   - 一旦版本不一致（例如当前客户端升级到 2.25，而备份为 2.24），立即终止恢复并返回 `False`，正式文件与备份文件均保持完全不变，输出明确安全提示。
+2. **对旧 State / 未知版本的 Fail-Closed 处理**：
+   - 若 `clean_backup_version` 缺失、为 `None`，或当前宿主版本为 `unknown`；
+   - 系统坚决遵循 Fail-Closed 策略，严禁默认猜测版本一致，直接拒绝自动 restore；
+   - 保护客户端不被未知或不兼容的旧核心文件破坏。
+3. **备份体系安全闭环**：
+   - 彻底确立了“backup 不仅不能跨版本打补丁，也绝对不能跨版本 restore”的端到端安全屏障。

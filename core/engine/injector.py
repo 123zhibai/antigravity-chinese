@@ -28,30 +28,65 @@ except (ImportError, ValueError):
     from state import load_state, save_state, check_asar_is_patched
     from logger import log_event
 
-def restore_official_clean(custom_target_asar=None, custom_clean_backup=None):
-    """从独立备份区恢复官方纯净原版"""
+RESTORE_VERSION_MISMATCH_MSG = (
+    "检测到官方备份版本与当前 Antigravity 客户端版本不一致。\n\n"
+    "为防止旧版核心文件覆盖新版客户端，本次恢复已安全停止。\n\n"
+    "当前 app.asar 未被修改。\n"
+    "旧版 clean backup 仍被保留。"
+)
+
+RESTORE_UNKNOWN_VERSION_MSG = (
+    "无法确认官方备份与当前 Antigravity 客户端的版本兼容性。\n\n"
+    "为防止未知或损坏的核心文件覆盖当前客户端，本次恢复已安全停止。\n\n"
+    "当前 app.asar 未被修改。\n"
+    "clean backup 仍被保留。"
+)
+
+def restore_official_clean(custom_target_asar=None, custom_clean_backup=None, custom_version=None, custom_state=None):
+    """
+    从独立备份区恢复官方纯净原版（包含严格的跨版本安全防护与 Fail-Closed 判定）
+    """
     paths = get_paths()
-    if not paths:
+    if not paths and not custom_target_asar:
         return False, "未找到路径配置"
 
-    clean_backup = custom_clean_backup or paths['clean_backup_asar']
-    target_asar = custom_target_asar or paths['asar_path']
+    clean_backup = custom_clean_backup or (paths['clean_backup_asar'] if paths else None)
+    target_asar = custom_target_asar or (paths['asar_path'] if paths else None)
 
-    if not os.path.exists(clean_backup):
+    if not clean_backup or not os.path.exists(clean_backup):
         msg = f"未找到官方纯净备份文件: {clean_backup}"
         log_event("ROLLBACK", msg, is_error=True)
         return False, msg
 
+    if not target_asar or not os.path.exists(target_asar):
+        return False, f"未找到目标核心文件: {target_asar}"
+
+    # 1. 读取当前客户端版本与备份绑定版本
+    current_ver = custom_version or (get_exe_version(paths['exe_path']) if paths else None) or "unknown"
+    state = custom_state if custom_state is not None else load_state()
+    clean_backup_ver = state.get('clean_backup_version')
+
+    # 2. 版本确认检查：采用严格 Fail-Closed 原则，版本未知时默认禁止 restore
+    if not clean_backup_ver or current_ver == "unknown":
+        log_event("ROLLBACK", f"无法确认备份版本兼容性 (客户端: {current_ver}, 备份: {clean_backup_ver})，触发 Fail-Closed 拦截", is_error=True)
+        log_event("ROLLBACK", RESTORE_UNKNOWN_VERSION_MSG, is_error=True)
+        return False, RESTORE_UNKNOWN_VERSION_MSG
+
+    # 3. 跨版本防混淆校验：只有明确版本一致时才允许恢复
+    if current_ver != clean_backup_ver:
+        log_event("ROLLBACK", f"备份版本 ({clean_backup_ver}) 与当前客户端版本 ({current_ver}) 错配，严禁跨版本恢复！", is_error=True)
+        log_event("ROLLBACK", RESTORE_VERSION_MISMATCH_MSG, is_error=True)
+        return False, RESTORE_VERSION_MISMATCH_MSG
+
+    # 4. 执行安全的原子文件恢复
     try:
-        # 使用安全的原子替换恢复官方原版
         tmp_restore = target_asar + ".restore_tmp"
         shutil.copy2(clean_backup, tmp_restore)
         os.replace(tmp_restore, target_asar)
 
-        if not custom_target_asar:
-            state = load_state()
-            state['current_status'] = "official_clean"
-            state['patched_sha256'] = None
+        state['current_status'] = "official_clean"
+        state['patched_sha256'] = None
+        if custom_state is None and not custom_target_asar:
             save_state(state)
         msg = "已成功安全恢复为 Antigravity 官方原版英文界面！"
         log_event("ROLLBACK", msg)
@@ -187,7 +222,7 @@ def perform_patch(force=False, is_self_healing=False, custom_target_asar=None, c
         if not ok:
             log_event("VALIDATE", f"JS 语法校验失败: {p} - {vmsg}", is_error=True)
             log_event("ROLLBACK", "触发安全回滚保护机制...")
-            restore_official_clean()
+            restore_official_clean(custom_target_asar=target_asar, custom_clean_backup=clean_backup, custom_version=current_ver, custom_state=state)
             return False, f"语法校验失败并已自动回滚: {vmsg}"
 
     # 6. 保存为同目录临时 ASAR 并进行完整性与注入标记校验 (P0-4)
