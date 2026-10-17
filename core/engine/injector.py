@@ -15,7 +15,7 @@ try:
     from ..config import get_paths, sha256_file, get_exe_version
     from .asar import AsarArchive
     from .runtime_builder import build_runtime_script
-    from .validator import check_js_syntax, validate_patched_asar
+    from .validator import check_js_syntax, validate_patched_asar, validate_official_candidate
     from ..adapters import get_adapter
     from ..state import load_state, save_state, check_asar_is_patched
     from ..logger import log_event
@@ -23,19 +23,19 @@ except (ImportError, ValueError):
     from config import get_paths, sha256_file, get_exe_version
     from engine.asar import AsarArchive
     from engine.runtime_builder import build_runtime_script
-    from engine.validator import check_js_syntax, validate_patched_asar
+    from engine.validator import check_js_syntax, validate_patched_asar, validate_official_candidate
     from adapters import get_adapter
     from state import load_state, save_state, check_asar_is_patched
     from logger import log_event
 
-def restore_official_clean():
+def restore_official_clean(custom_target_asar=None, custom_clean_backup=None):
     """从独立备份区恢复官方纯净原版"""
     paths = get_paths()
     if not paths:
         return False, "未找到路径配置"
 
-    clean_backup = paths['clean_backup_asar']
-    target_asar = paths['asar_path']
+    clean_backup = custom_clean_backup or paths['clean_backup_asar']
+    target_asar = custom_target_asar or paths['asar_path']
 
     if not os.path.exists(clean_backup):
         msg = f"未找到官方纯净备份文件: {clean_backup}"
@@ -43,29 +43,37 @@ def restore_official_clean():
         return False, msg
 
     try:
-        shutil.copy2(clean_backup, target_asar)
-        state = load_state()
-        state['current_status'] = "official_clean"
-        state['patched_sha256'] = None
-        save_state(state)
+        # 使用安全的原子替换恢复官方原版
+        tmp_restore = target_asar + ".restore_tmp"
+        shutil.copy2(clean_backup, tmp_restore)
+        os.replace(tmp_restore, target_asar)
+
+        if not custom_target_asar:
+            state = load_state()
+            state['current_status'] = "official_clean"
+            state['patched_sha256'] = None
+            save_state(state)
         msg = "已成功安全恢复为 Antigravity 官方原版英文界面！"
         log_event("ROLLBACK", msg)
         return True, msg
     except Exception as e:
         err = f"恢复官方版本时发生错误: {str(e)}"
         log_event("ROLLBACK", err, is_error=True)
+        if os.path.exists(target_asar + ".restore_tmp"):
+            try: os.remove(target_asar + ".restore_tmp")
+            except Exception: pass
         return False, err
 
-def perform_patch(force=False, is_self_healing=False):
+def perform_patch(force=False, is_self_healing=False, custom_target_asar=None, custom_clean_backup=None):
     """
-    执行汉化注入流程（支持自愈重打与安全回滚）
+    执行汉化注入流程（支持自愈重打、纯净备份安全保护与真正的原子替换）
     """
     paths = get_paths()
     if not paths:
         return False, "未找到 Antigravity 安装目录"
 
-    target_asar = paths['asar_path']
-    clean_backup = paths['clean_backup_asar']
+    target_asar = custom_target_asar or paths['asar_path']
+    clean_backup = custom_clean_backup or paths['clean_backup_asar']
 
     if not os.path.exists(target_asar):
         return False, f"未找到核心文件: {target_asar}"
@@ -78,16 +86,35 @@ def perform_patch(force=False, is_self_healing=False):
     if is_already_patched and not force:
         return True, "当前 Antigravity 已经是最新汉化版本，无需重复注入"
 
-    # 1. 备份机制：若当前 target_asar 是未汉化的纯净版本，则备份至独立安全的备份区
+    # 1. 备份机制：严格验证候选官方版本，防止截断、半写入或损坏文件污染 clean backup (P0-1)
     if not is_already_patched:
-        log_event("PATCH", f"检测到官方纯净原版 (Hash: {current_hash[:10]}...)，正在备份到独立隔离区...")
-        try:
-            shutil.copy2(target_asar, clean_backup)
-        except Exception as e:
-            log_event("PATCH", f"备份官方原版失败: {e}", is_error=True)
-            return False, f"备份失败: {e}"
+        log_event("PATCH", f"检测到未汉化文件，正在进行候选官方版本稳定性与完整性验证...")
+        cand_ok, cand_msg = validate_official_candidate(target_asar, check_stability=True)
+        if cand_ok:
+            need_backup_update = True
+            if os.path.exists(clean_backup):
+                clean_hash = sha256_file(clean_backup)
+                if clean_hash == current_hash:
+                    need_backup_update = False
+
+            if need_backup_update:
+                log_event("PATCH", f"官方纯净版本验证通过 (Hash: {current_hash[:10]}...)，正在安全备份到独立隔离区...")
+                try:
+                    tmp_backup = clean_backup + ".tmp"
+                    shutil.copy2(target_asar, tmp_backup)
+                    os.replace(tmp_backup, clean_backup)
+                except Exception as e:
+                    log_event("PATCH", f"备份官方原版失败: {e}", is_error=True)
+                    if os.path.exists(clean_backup + ".tmp"):
+                        try: os.remove(clean_backup + ".tmp")
+                        except Exception: pass
+                    return False, f"备份官方原版失败: {e}"
+        else:
+            log_event("PATCH", f"当前文件未通过官方候选验证 ({cand_msg})，严禁覆盖 clean backup！", is_error=True)
+            if not os.path.exists(clean_backup):
+                return False, f"未找到可用官方备份，且当前文件未通过官方验证: {cand_msg}"
+            log_event("PATCH", "将保留并使用既有的官方纯净备份构建汉化核心", is_error=False)
     else:
-        # 如果当前已经汉化，但备份区不存在官方原版，则提醒
         if not os.path.exists(clean_backup):
             log_event("PATCH", "警告: 独立备份区无官方纯净备份，本次将直接在当前基础上更新", is_error=False)
 
@@ -123,7 +150,7 @@ def perform_patch(force=False, is_self_healing=False):
 
     log_event("PATCH", f"成功注入补丁至关键文件: {', '.join(patched_files)}")
 
-    # 5. 安全校验：JavaScript 语法检测 (node --check)
+    # 5. 安全校验：JavaScript 语法检测 (node --check / 结构降级检测)
     for p in patched_files:
         code_text = archive.read_text(p)
         ok, vmsg = check_js_syntax(code_text)
@@ -133,7 +160,7 @@ def perform_patch(force=False, is_self_healing=False):
             restore_official_clean()
             return False, f"语法校验失败并已自动回滚: {vmsg}"
 
-    # 6. 保存为临时 ASAR 并校验完整性
+    # 6. 保存为同目录临时 ASAR 并进行完整性与注入标记校验 (P0-4)
     tmp_asar = target_asar + ".patch_tmp"
     try:
         archive.save(tmp_asar)
@@ -144,23 +171,25 @@ def perform_patch(force=False, is_self_healing=False):
             except Exception: pass
         return False, f"保存 ASAR 失败: {str(e)}"
 
-    ok, vmsg = validate_patched_asar(tmp_asar)
+    # 对临时文件进行全量检验（结构、关键入口、UI 注入标记及期望注入文件）
+    ok, vmsg = validate_patched_asar(tmp_asar, expected_files=patched_files, require_ui_marker=True)
     if not ok:
-        log_event("VALIDATE", f"ASAR 完整性校验失败: {vmsg}", is_error=True)
+        log_event("VALIDATE", f"临时 ASAR 完整性或汉化标记校验失败: {vmsg}", is_error=True)
         if os.path.exists(tmp_asar):
             try: os.remove(tmp_asar)
             except Exception: pass
-        log_event("ROLLBACK", "触发安全回滚保护机制...")
-        restore_official_clean()
-        return False, f"ASAR 校验失败并已自动回滚: {vmsg}"
+        log_event("ROLLBACK", "临时文件校验未通过，正式文件保持未修改原样。")
+        return False, f"ASAR 校验失败，已放弃替换以保护正式文件: {vmsg}"
 
-    # 7. 原子替换为正式 app.asar
+    # 7. 真正安全的原子替换 (os.replace) (P0-4)
     try:
-        shutil.copy2(tmp_asar, target_asar)
-        os.remove(tmp_asar)
+        os.replace(tmp_asar, target_asar)
     except Exception as e:
-        log_event("PATCH", f"覆盖正式 app.asar 失败 (可能文件被占用): {str(e)}", is_error=True)
-        return False, f"文件写入失败 (请确保 Antigravity 完全退出后重试): {str(e)}"
+        log_event("PATCH", f"原子替换正式 app.asar 失败 (可能文件被占用): {str(e)}", is_error=True)
+        if os.path.exists(tmp_asar):
+            try: os.remove(tmp_asar)
+            except Exception: pass
+        return False, f"文件替换失败 (请确保 Antigravity 完全退出后重试): {str(e)}"
 
     # 8. 更新状态数据库与日志
     new_hash = sha256_file(target_asar)
@@ -170,17 +199,18 @@ def perform_patch(force=False, is_self_healing=False):
     if is_self_healing:
         healing_count += 1
 
-    state.update({
-        "antigravity_version": current_ver,
-        "official_clean_sha256": clean_hash or state.get("official_clean_sha256"),
-        "patched_sha256": new_hash,
-        "current_status": "patched",
-        "last_patch_time": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-        "last_patch_adapter": adapter.name,
-        "patched_files": patched_files,
-        "total_self_healing_count": healing_count
-    })
-    save_state(state)
+    if not custom_target_asar:
+        state.update({
+            "antigravity_version": current_ver,
+            "official_clean_sha256": clean_hash or state.get("official_clean_sha256"),
+            "patched_sha256": new_hash,
+            "current_status": "patched",
+            "last_patch_time": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "last_patch_adapter": adapter.name,
+            "patched_files": patched_files,
+            "total_self_healing_count": healing_count
+        })
+        save_state(state)
 
     success_msg = f"汉化注入完成！(版本: {current_ver}, 适配器: {adapter.name}, 自愈累计: {healing_count} 次)"
     log_event("PATCH", success_msg)
